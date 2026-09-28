@@ -1,0 +1,17 @@
+# Конфигурация golangci-lint
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - unused
+    - ineffassign
+    - misspell
+    - gofmt
+    - predeclared
+
+issues:
+  exclude-use-default: false

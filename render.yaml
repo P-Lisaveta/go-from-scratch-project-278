@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: go-from-scratch-project-278
+    runtime: docker
+    plan: free
+    healthCheckPath: /ping
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: 8080
+      - key: DATABASE_URL
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENTRY_ENVIRONMENT
+        value: production

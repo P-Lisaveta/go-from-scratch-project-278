@@ -3,6 +3,17 @@ SELECT id, original_url, short_name, created_at
 FROM links
 ORDER BY id;
 
+-- name: ListLinksPage :many
+SELECT id, original_url, short_name, created_at
+FROM links
+ORDER BY id
+LIMIT sqlc.arg(page_limit)::bigint
+OFFSET sqlc.arg(page_offset)::bigint;
+
+-- name: CountLinks :one
+SELECT count(*)
+FROM links;
+
 -- name: GetLink :one
 SELECT id, original_url, short_name, created_at
 FROM links

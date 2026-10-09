@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -27,12 +28,15 @@ const (
 	databaseTimeout           = 5 * time.Second
 	generatedShortNameLength  = 8
 	generatedShortNameRetries = 5
+	maxInt64                  = int64(^uint64(0) >> 1)
 )
 
 var shortNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 type linkStore interface {
 	ListLinks(context.Context) ([]link, error)
+	ListLinksPage(context.Context, int64, int64) ([]link, error)
+	CountLinks(context.Context) (int64, error)
 	GetLink(context.Context, int64) (link, error)
 	CreateLink(context.Context, string, string) (link, error)
 	UpdateLink(context.Context, int64, string, string) (link, error)
@@ -53,6 +57,11 @@ type link struct {
 	ID          int64
 	OriginalURL string
 	ShortName   string
+}
+
+type linksRange struct {
+	start int64
+	end   int64
 }
 
 type linkResponse struct {
@@ -86,6 +95,26 @@ func (store databaseStore) ListLinks(ctx context.Context) ([]link, error) {
 		links = append(links, link{ID: row.ID, OriginalURL: row.OriginalUrl, ShortName: row.ShortName})
 	}
 	return links, nil
+}
+
+func (store databaseStore) ListLinksPage(ctx context.Context, limit, offset int64) ([]link, error) {
+	rows, err := store.queries.ListLinksPage(ctx, sqlc.ListLinksPageParams{
+		PageLimit:  limit,
+		PageOffset: offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	links := make([]link, 0, len(rows))
+	for _, row := range rows {
+		links = append(links, link{ID: row.ID, OriginalURL: row.OriginalUrl, ShortName: row.ShortName})
+	}
+	return links, nil
+}
+
+func (store databaseStore) CountLinks(ctx context.Context) (int64, error) {
+	return store.queries.CountLinks(ctx)
 }
 
 func (store databaseStore) GetLink(ctx context.Context, id int64) (link, error) {
@@ -148,21 +177,81 @@ func newRouter(store linkStore, baseURL string) *gin.Engine {
 }
 
 func (api api) listLinks(c *gin.Context) {
+	requestedRange, paginated, ok := readLinksRange(c)
+	if !ok {
+		return
+	}
+
 	ctx, cancel := requestContext(c)
 	defer cancel()
 
+	if !paginated {
+		api.listAllLinks(c, ctx)
+		return
+	}
+
+	total, err := api.store.CountLinks(ctx)
+	if err != nil {
+		writeStoreError(c, err)
+		return
+	}
+
+	links, err := api.store.ListLinksPage(ctx, requestedRange.end-requestedRange.start+1, requestedRange.start)
+	if err != nil {
+		writeStoreError(c, err)
+		return
+	}
+
+	setContentRange(c, requestedRange.start, total, len(links))
+	api.writeLinks(c, links)
+}
+
+func (api api) listAllLinks(c *gin.Context, ctx context.Context) {
 	links, err := api.store.ListLinks(ctx)
 	if err != nil {
 		writeStoreError(c, err)
 		return
 	}
 
+	api.writeLinks(c, links)
+}
+
+func (api api) writeLinks(c *gin.Context, links []link) {
 	response := make([]linkResponse, 0, len(links))
 	for _, link := range links {
 		response = append(response, api.toLinkResponse(link))
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+func readLinksRange(c *gin.Context) (linksRange, bool, bool) {
+	rawRange, present := c.GetQuery("range")
+	if !present {
+		return linksRange{}, false, true
+	}
+
+	var values []int64
+	if err := json.Unmarshal([]byte(rawRange), &values); err != nil || len(values) != 2 {
+		writeError(c, http.StatusBadRequest, "invalid_range", "range must be a JSON array with two integers")
+		return linksRange{}, false, false
+	}
+	if values[0] < 0 || values[1] < values[0] || values[1]-values[0] == maxInt64 {
+		writeError(c, http.StatusBadRequest, "invalid_range", "range must be a JSON array with two integers")
+		return linksRange{}, false, false
+	}
+
+	return linksRange{start: values[0], end: values[1]}, true, true
+}
+
+func setContentRange(c *gin.Context, start, total int64, count int) {
+	c.Header("Accept-Ranges", "links")
+	if count == 0 {
+		c.Header("Content-Range", fmt.Sprintf("links */%d", total))
+		return
+	}
+
+	c.Header("Content-Range", fmt.Sprintf("links %d-%d/%d", start, start+int64(count)-1, total))
 }
 
 func (api api) createLink(c *gin.Context) {

@@ -10,6 +10,18 @@ import (
 	"time"
 )
 
+const countLinks = `-- name: CountLinks :one
+SELECT count(*)
+FROM links
+`
+
+func (q *Queries) CountLinks(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countLinks)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createLink = `-- name: CreateLink :one
 INSERT INTO links (original_url, short_name)
 VALUES ($1, $2)
@@ -100,6 +112,54 @@ func (q *Queries) ListLinks(ctx context.Context) ([]ListLinksRow, error) {
 	var items []ListLinksRow
 	for rows.Next() {
 		var i ListLinksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OriginalUrl,
+			&i.ShortName,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLinksPage = `-- name: ListLinksPage :many
+SELECT id, original_url, short_name, created_at
+FROM links
+ORDER BY id
+LIMIT $2::bigint
+OFFSET $1::bigint
+`
+
+type ListLinksPageParams struct {
+	PageOffset int64 `json:"page_offset"`
+	PageLimit  int64 `json:"page_limit"`
+}
+
+type ListLinksPageRow struct {
+	ID          int64     `json:"id"`
+	OriginalUrl string    `json:"original_url"`
+	ShortName   string    `json:"short_name"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+func (q *Queries) ListLinksPage(ctx context.Context, arg ListLinksPageParams) ([]ListLinksPageRow, error) {
+	rows, err := q.db.QueryContext(ctx, listLinksPage, arg.PageOffset, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLinksPageRow
+	for rows.Next() {
+		var i ListLinksPageRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OriginalUrl,

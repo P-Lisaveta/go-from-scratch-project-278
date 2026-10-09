@@ -1,10 +1,13 @@
-:{$PORT} {
-	encode zstd gzip
+:80 {
+	root * /app/public
 
-	@api path /api/* /ping /debug/*
-	reverse_proxy @api 127.0.0.1:8081
+	handle /assets/* {
+		file_server
+	}
 
-	root * /app/frontend
-	try_files {path} /index.html
-	file_server
+	handle / {
+		file_server
+	}
+
+	reverse_proxy localhost:8080
 }

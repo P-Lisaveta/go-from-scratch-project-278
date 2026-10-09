@@ -101,8 +101,8 @@ go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate
 
 ```bash
 docker build -t go-from-scratch-project-278 .
-docker run --rm -p 8080:8080 \
-  -e PORT=8080 \
+docker run --rm -p 8080:80 \
+  -e PORT=80 \
   -e BASE_URL="http://localhost:8080" \
   -e DATABASE_URL="postgres://user:password@host:5432/dbname?sslmode=disable" \
   -e SENTRY_DSN="https://public-key@bugsink-host/project-id" \

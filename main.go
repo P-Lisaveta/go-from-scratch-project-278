@@ -39,9 +39,14 @@ type linkStore interface {
 	ListLinksPage(context.Context, int64, int64) ([]link, error)
 	CountLinks(context.Context) (int64, error)
 	GetLink(context.Context, int64) (link, error)
+	GetLinkByShortName(context.Context, string) (link, error)
 	CreateLink(context.Context, string, string) (link, error)
 	UpdateLink(context.Context, int64, string, string) (link, error)
 	DeleteLink(context.Context, int64) (int64, error)
+	CreateLinkVisit(context.Context, int64, string, string, string, int) (linkVisit, error)
+	ListLinkVisits(context.Context) ([]linkVisit, error)
+	ListLinkVisitsPage(context.Context, int64, int64) ([]linkVisit, error)
+	CountLinkVisits(context.Context) (int64, error)
 }
 
 type api struct {
@@ -60,6 +65,16 @@ type link struct {
 	ShortName   string
 }
 
+type linkVisit struct {
+	ID        int64
+	LinkID    int64
+	IP        string
+	UserAgent string
+	Referer   string
+	Status    int
+	CreatedAt time.Time
+}
+
 type linksRange struct {
 	start int64
 	end   int64
@@ -70,6 +85,15 @@ type linkResponse struct {
 	OriginalURL string `json:"original_url"`
 	ShortName   string `json:"short_name"`
 	ShortURL    string `json:"short_url"`
+}
+
+type linkVisitResponse struct {
+	ID        int64     `json:"id"`
+	LinkID    int64     `json:"link_id"`
+	CreatedAt time.Time `json:"created_at"`
+	IP        string    `json:"ip"`
+	UserAgent string    `json:"user_agent"`
+	Status    int       `json:"status"`
 }
 
 type errorResponse struct {
@@ -123,6 +147,11 @@ func (store databaseStore) GetLink(ctx context.Context, id int64) (link, error) 
 	return link{ID: row.ID, OriginalURL: row.OriginalUrl, ShortName: row.ShortName}, err
 }
 
+func (store databaseStore) GetLinkByShortName(ctx context.Context, shortName string) (link, error) {
+	row, err := store.queries.GetLinkByShortName(ctx, shortName)
+	return link{ID: row.ID, OriginalURL: row.OriginalUrl, ShortName: row.ShortName}, err
+}
+
 func (store databaseStore) CreateLink(ctx context.Context, originalURL, shortName string) (link, error) {
 	row, err := store.queries.CreateLink(ctx, sqlc.CreateLinkParams{
 		OriginalUrl: originalURL,
@@ -144,13 +173,86 @@ func (store databaseStore) DeleteLink(ctx context.Context, id int64) (int64, err
 	return store.queries.DeleteLink(ctx, id)
 }
 
+func (store databaseStore) CreateLinkVisit(ctx context.Context, linkID int64, ip, userAgent, referer string, status int) (linkVisit, error) {
+	row, err := store.queries.CreateLinkVisit(ctx, sqlc.CreateLinkVisitParams{
+		LinkID:    linkID,
+		Ip:        ip,
+		UserAgent: userAgent,
+		Referer:   referer,
+		Status:    int32(status),
+	})
+	return linkVisit{
+		ID:        row.ID,
+		LinkID:    row.LinkID,
+		IP:        row.Ip,
+		UserAgent: row.UserAgent,
+		Referer:   row.Referer,
+		Status:    int(row.Status),
+		CreatedAt: row.CreatedAt,
+	}, err
+}
+
+func (store databaseStore) ListLinkVisits(ctx context.Context) ([]linkVisit, error) {
+	rows, err := store.queries.ListLinkVisits(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return linkVisitsFromRows(rows), nil
+}
+
+func (store databaseStore) ListLinkVisitsPage(ctx context.Context, limit, offset int64) ([]linkVisit, error) {
+	rows, err := store.queries.ListLinkVisitsPage(ctx, sqlc.ListLinkVisitsPageParams{
+		PageLimit:  limit,
+		PageOffset: offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	visits := make([]linkVisit, 0, len(rows))
+	for _, row := range rows {
+		visits = append(visits, linkVisit{
+			ID:        row.ID,
+			LinkID:    row.LinkID,
+			IP:        row.Ip,
+			UserAgent: row.UserAgent,
+			Referer:   row.Referer,
+			Status:    int(row.Status),
+			CreatedAt: row.CreatedAt,
+		})
+	}
+	return visits, nil
+}
+
+func (store databaseStore) CountLinkVisits(ctx context.Context) (int64, error) {
+	return store.queries.CountLinkVisits(ctx)
+}
+
+func linkVisitsFromRows(rows []sqlc.LinkVisit) []linkVisit {
+	visits := make([]linkVisit, 0, len(rows))
+	for _, row := range rows {
+		visits = append(visits, linkVisit{
+			ID:        row.ID,
+			LinkID:    row.LinkID,
+			IP:        row.Ip,
+			UserAgent: row.UserAgent,
+			Referer:   row.Referer,
+			Status:    int(row.Status),
+			CreatedAt: row.CreatedAt,
+		})
+	}
+	return visits
+}
+
 // newRouter creates an HTTP router for the short-links API.
 func newRouter(store linkStore, baseURL string) *gin.Engine {
 	router := gin.New()
+	router.TrustedPlatform = gin.PlatformCloudflare
 	router.Use(cors.New(cors.Config{
 		AllowOrigins:  []string{"http://localhost:5173"},
 		AllowMethods:  []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
-		AllowHeaders:  []string{"Origin", "Content-Type", "Accept"},
+		AllowHeaders:  []string{"Origin", "Content-Type", "Accept", "Range"},
 		ExposeHeaders: []string{"Content-Range", "Accept-Ranges"},
 		MaxAge:        time.Hour,
 	}))
@@ -180,12 +282,14 @@ func newRouter(store linkStore, baseURL string) *gin.Engine {
 	router.GET("/api/links/:id", api.getLink)
 	router.PUT("/api/links/:id", api.updateLink)
 	router.DELETE("/api/links/:id", api.deleteLink)
+	router.GET("/api/link_visits", api.listLinkVisits)
+	router.GET("/r/:code", api.redirect)
 
 	return router
 }
 
 func (api api) listLinks(c *gin.Context) {
-	requestedRange, paginated, ok := readLinksRange(c)
+	requestedRange, paginated, ok := readRange(c)
 	if !ok {
 		return
 	}
@@ -210,7 +314,7 @@ func (api api) listLinks(c *gin.Context) {
 		return
 	}
 
-	setContentRange(c, requestedRange.start, total, len(links))
+	setContentRange(c, "links", requestedRange.start, total, len(links))
 	api.writeLinks(c, links)
 }
 
@@ -233,10 +337,14 @@ func (api api) writeLinks(c *gin.Context, links []link) {
 	c.JSON(http.StatusOK, response)
 }
 
-func readLinksRange(c *gin.Context) (linksRange, bool, bool) {
-	rawRange, present := c.GetQuery("range")
-	if !present {
-		return linksRange{}, false, true
+func readRange(c *gin.Context) (linksRange, bool, bool) {
+	rawRange := c.GetHeader("Range")
+	if rawRange == "" {
+		var present bool
+		rawRange, present = c.GetQuery("range")
+		if !present {
+			return linksRange{}, false, true
+		}
 	}
 
 	var values []int64
@@ -252,14 +360,90 @@ func readLinksRange(c *gin.Context) (linksRange, bool, bool) {
 	return linksRange{start: values[0], end: values[1]}, true, true
 }
 
-func setContentRange(c *gin.Context, start, total int64, count int) {
-	c.Header("Accept-Ranges", "links")
+func setContentRange(c *gin.Context, unit string, start, total int64, count int) {
+	c.Header("Accept-Ranges", unit)
 	if count == 0 {
-		c.Header("Content-Range", fmt.Sprintf("links */%d", total))
+		c.Header("Content-Range", fmt.Sprintf("%s */%d", unit, total))
 		return
 	}
 
-	c.Header("Content-Range", fmt.Sprintf("links %d-%d/%d", start, start+int64(count)-1, total))
+	c.Header("Content-Range", fmt.Sprintf("%s %d-%d/%d", unit, start, start+int64(count)-1, total))
+}
+
+func (api api) redirect(c *gin.Context) {
+	ctx, cancel := requestContext(c)
+	defer cancel()
+
+	link, err := api.store.GetLinkByShortName(ctx, c.Param("code"))
+	if err != nil {
+		writeStoreError(c, err)
+		return
+	}
+
+	if _, err := api.store.CreateLinkVisit(
+		ctx,
+		link.ID,
+		c.ClientIP(),
+		c.Request.UserAgent(),
+		c.GetHeader("Referer"),
+		http.StatusFound,
+	); err != nil {
+		writeStoreError(c, err)
+		return
+	}
+
+	c.Redirect(http.StatusFound, link.OriginalURL)
+}
+
+func (api api) listLinkVisits(c *gin.Context) {
+	requestedRange, paginated, ok := readRange(c)
+	if !ok {
+		return
+	}
+
+	ctx, cancel := requestContext(c)
+	defer cancel()
+
+	if !paginated {
+		visits, err := api.store.ListLinkVisits(ctx)
+		if err != nil {
+			writeStoreError(c, err)
+			return
+		}
+		api.writeLinkVisits(c, visits)
+		return
+	}
+
+	total, err := api.store.CountLinkVisits(ctx)
+	if err != nil {
+		writeStoreError(c, err)
+		return
+	}
+
+	visits, err := api.store.ListLinkVisitsPage(ctx, requestedRange.end-requestedRange.start+1, requestedRange.start)
+	if err != nil {
+		writeStoreError(c, err)
+		return
+	}
+
+	setContentRange(c, "link_visits", requestedRange.start, total, len(visits))
+	api.writeLinkVisits(c, visits)
+}
+
+func (api api) writeLinkVisits(c *gin.Context, visits []linkVisit) {
+	response := make([]linkVisitResponse, 0, len(visits))
+	for _, visit := range visits {
+		response = append(response, linkVisitResponse{
+			ID:        visit.ID,
+			LinkID:    visit.LinkID,
+			CreatedAt: visit.CreatedAt,
+			IP:        visit.IP,
+			UserAgent: visit.UserAgent,
+			Status:    visit.Status,
+		})
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 func (api api) createLink(c *gin.Context) {

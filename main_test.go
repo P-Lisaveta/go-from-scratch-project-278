@@ -24,6 +24,29 @@ func TestPingRoute(t *testing.T) {
 	assert.Equal(t, "pong", response.Body.String())
 }
 
+func TestCORS(t *testing.T) {
+	t.Parallel()
+
+	request := httptest.NewRequest(http.MethodOptions, "/api/links", nil)
+	request.Header.Set("Origin", "http://localhost:5173")
+	request.Header.Set("Access-Control-Request-Method", http.MethodGet)
+	response := httptest.NewRecorder()
+
+	newTestRouter().ServeHTTP(response, request)
+
+	assert.Equal(t, http.StatusNoContent, response.Code)
+	assert.Equal(t, "http://localhost:5173", response.Header().Get("Access-Control-Allow-Origin"))
+	assert.Contains(t, response.Header().Get("Access-Control-Allow-Methods"), http.MethodDelete)
+
+	request = httptest.NewRequest(http.MethodGet, "/api/links", nil)
+	request.Header.Set("Origin", "http://localhost:5173")
+	response = httptest.NewRecorder()
+	newTestRouter().ServeHTTP(response, request)
+
+	assert.Equal(t, http.StatusOK, response.Code)
+	assert.Contains(t, response.Header().Get("Access-Control-Expose-Headers"), "Content-Range")
+}
+
 func TestListLinks(t *testing.T) {
 	t.Parallel()
 

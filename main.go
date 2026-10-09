@@ -19,6 +19,7 @@ import (
 	"github.com/P-Lisaveta/go-from-scratch-project-278/internal/db/sqlc"
 	"github.com/getsentry/sentry-go"
 	sentrygin "github.com/getsentry/sentry-go/gin"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -146,6 +147,13 @@ func (store databaseStore) DeleteLink(ctx context.Context, id int64) (int64, err
 // newRouter creates an HTTP router for the short-links API.
 func newRouter(store linkStore, baseURL string) *gin.Engine {
 	router := gin.New()
+	router.Use(cors.New(cors.Config{
+		AllowOrigins:  []string{"http://localhost:5173"},
+		AllowMethods:  []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
+		AllowHeaders:  []string{"Origin", "Content-Type", "Accept"},
+		ExposeHeaders: []string{"Content-Range", "Accept-Ranges"},
+		MaxAge:        time.Hour,
+	}))
 	router.Use(gin.Logger())
 	router.Use(sentrygin.New(sentrygin.Options{}))
 	router.Use(gin.CustomRecovery(func(c *gin.Context, recovered any) {

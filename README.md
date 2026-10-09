@@ -15,6 +15,8 @@
 - Gin
 - PostgreSQL
 - goose
+- Node.js
+- Caddy
 - Docker
 - Render
 - Bugsink (Sentry SDK)
@@ -47,12 +49,22 @@ cd go-from-scratch-project-278
 
 ## Локальный запуск
 
+Нужен Node.js 20 или новее. Установите frontend-зависимости:
+
 ```bash
-go run .
+npm install
 ```
 
-Приложение будет доступно на `http://localhost:8080`. Перед запуском задайте
-`DATABASE_URL`. Миграции применяются при запуске контейнера через `bin/run.sh`.
+Затем задайте `DATABASE_URL` и запустите API и UI одной командой:
+
+```bash
+npm start
+```
+
+Интерфейс будет доступен на `http://localhost:5173`, API — на
+`http://localhost:8080`. В development API разрешает CORS-запросы с
+`http://localhost:5173`. Миграции применяются при запуске контейнера через
+`bin/run.sh`.
 
 ## API коротких ссылок
 
@@ -105,7 +117,8 @@ docker run --rm -p 8080:8080 \
 4. Добавьте переменные окружения `PORT=8080`, `DATABASE_URL`, `BASE_URL` и `SENTRY_DSN`.
    Значение `BASE_URL` — публичный URL Web Service, например
    `https://go-from-scratch-project-278.onrender.com`.
-5. После сборки проверьте маршрут `/ping` по HTTPS.
+5. После сборки Caddy раздаёт интерфейс на корневом маршруте и проксирует
+   `/api/*` и `/ping` к API. Проверьте маршрут `/ping` по HTTPS.
 
 ## Использование
 

@@ -1,0 +1,13 @@
+{
+  "name": "go-from-scratch-project-278",
+  "private": true,
+  "scripts": {
+    "start": "concurrently \"go run .\" \"npx start-hexlet-url-shortener-frontend\"",
+    "start:api": "go run .",
+    "start:frontend": "start-hexlet-url-shortener-frontend"
+  },
+  "dependencies": {
+    "@hexlet/project-url-shortener-frontend": "^1.0.0",
+    "concurrently": "^10.0.6"
+  }
+}

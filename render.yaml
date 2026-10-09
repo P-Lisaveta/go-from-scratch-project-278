@@ -10,6 +10,8 @@ services:
         value: 8080
       - key: DATABASE_URL
         sync: false
+      - key: BASE_URL
+        sync: false
       - key: SENTRY_DSN
         sync: false
       - key: SENTRY_ENVIRONMENT

@@ -593,7 +593,7 @@ func readLinkInput(c *gin.Context) (linkInput, bool) {
 		return linkInput{}, false
 	}
 
-	return linkInput{OriginalURL: payload.OriginalURL, ShortName: payload.ShortName}, true
+	return linkInput(payload), true
 }
 
 func writeBindingError(c *gin.Context, err error) {
@@ -744,7 +744,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Printf("close database: %v", err)
+		}
+	}()
 
 	baseURL := getEnv("BASE_URL", "http://localhost:"+port)
 	if err := newRouter(newDatabaseStore(sqlc.New(db)), baseURL).Run(":" + port); err != nil {

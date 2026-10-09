@@ -1,1 +1,7 @@
 node_modules/
+go-from-scratch-project-278
+*.test
+coverage.out
+.DS_Store
+.env
+.env.*

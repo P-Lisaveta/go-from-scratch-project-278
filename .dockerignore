@@ -1,0 +1,7 @@
+.git
+.claude
+.idea
+.env
+.env.*
+bin/app
+go-from-scratch-project-278

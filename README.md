@@ -2,6 +2,8 @@
 
 [![hexlet-check](https://github.com/P-Lisaveta/go-from-scratch-project-278/actions/workflows/hexlet-check.yml/badge.svg)](https://github.com/P-Lisaveta/go-from-scratch-project-278/actions)
 
+[![ci](https://github.com/P-Lisaveta/go-from-scratch-project-278/actions/workflows/ci.yml/badge.svg)](https://github.com/P-Lisaveta/go-from-scratch-project-278/actions/workflows/ci.yml)
+
 Спроектируйте приложение для удобных ссылок
 
 Учебный проект Хекслета: https://ru.hexlet.io/programs/go-from-scratch
@@ -10,6 +12,29 @@
 ## Стек
 
 - Go
+- Gin
+- PostgreSQL
+- goose
+- Docker
+- Render
+- Bugsink (Sentry SDK)
+
+## Деплой
+
+Приложение развернуто на Render: <https://go-from-scratch-project-278.onrender.com>.
+
+Проверка работоспособности: <https://go-from-scratch-project-278.onrender.com/ping>.
+
+## Переменные окружения
+
+| Переменная | Назначение |
+| --- | --- |
+| `PORT` | Порт HTTP-сервера, по умолчанию `8080` |
+| `DATABASE_URL` | Строка подключения к PostgreSQL |
+| `BASE_URL` | Публичный базовый URL приложения; из него формируется `short_url` |
+| `SENTRY_DSN` | DSN проекта Bugsink/Sentry |
+| `SENTRY_ENVIRONMENT` | Необязательное окружение событий, по умолчанию `production` |
+| `SENTRY_RELEASE` | Необязательный идентификатор релиза |
 
 ## Установка
 
@@ -19,6 +44,64 @@
 git clone https://github.com/P-Lisaveta/go-from-scratch-project-278.git
 cd go-from-scratch-project-278
 ```
+
+## Локальный запуск
+
+```bash
+go run .
+```
+
+Приложение будет доступно на `http://localhost:8080`. Перед запуском задайте
+`DATABASE_URL`. Миграции применяются при запуске контейнера через `bin/run.sh`.
+
+## API коротких ссылок
+
+| Метод | Маршрут | Результат |
+| --- | --- | --- |
+| `GET` | `/api/links` | Список ссылок |
+| `POST` | `/api/links` | Создание ссылки; `short_name` необязателен |
+| `GET` | `/api/links/:id` | Одна ссылка |
+| `PUT` | `/api/links/:id` | Обновление ссылки |
+| `DELETE` | `/api/links/:id` | Удаление ссылки |
+
+Для генерации кода SQL после изменения миграций или запросов выполните:
+
+```bash
+go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate
+```
+
+## Проверка мониторинга ошибок
+
+После запуска приложения с заданным `SENTRY_DSN` откройте:
+
+```text
+/debug/sentry
+```
+
+Приложение отправит тестовое событие в Bugsink. Проверить статус сервиса можно
+по маршруту `/ping`.
+
+## Сборка и запуск в Docker
+
+```bash
+docker build -t go-from-scratch-project-278 .
+docker run --rm -p 8080:8080 \
+  -e PORT=8080 \
+  -e BASE_URL="http://localhost:8080" \
+  -e DATABASE_URL="postgres://user:password@host:5432/dbname?sslmode=disable" \
+  -e SENTRY_DSN="https://public-key@bugsink-host/project-id" \
+  go-from-scratch-project-278
+```
+
+## Render
+
+1. Создайте Web Service из репозитория.
+2. Выберите Language — Docker.
+3. Выберите Instance Type — Free.
+4. Добавьте переменные окружения `PORT=8080`, `DATABASE_URL`, `BASE_URL` и `SENTRY_DSN`.
+   Значение `BASE_URL` — публичный URL Web Service, например
+   `https://go-from-scratch-project-278.onrender.com`.
+5. После сборки проверьте маршрут `/ping` по HTTPS.
 
 ## Использование
 

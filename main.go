@@ -9,9 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +19,7 @@ import (
 	sentrygin "github.com/getsentry/sentry-go/gin"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -31,8 +30,6 @@ const (
 	generatedShortNameRetries = 5
 	maxInt64                  = int64(^uint64(0) >> 1)
 )
-
-var shortNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 type linkStore interface {
 	ListLinks(context.Context) ([]link, error)
@@ -54,9 +51,14 @@ type api struct {
 	baseURL string
 }
 
+type createLinkPayload struct {
+	OriginalURL string `json:"original_url" binding:"required,url"`
+	ShortName   string `json:"short_name" binding:"omitempty,min=3,max=32"`
+}
+
 type linkInput struct {
-	OriginalURL string `json:"original_url"`
-	ShortName   string `json:"short_name"`
+	OriginalURL string
+	ShortName   string
 }
 
 type link struct {
@@ -99,6 +101,14 @@ type linkVisitResponse struct {
 type errorResponse struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+type validationErrorResponse struct {
+	Errors map[string]string `json:"errors"`
+}
+
+type invalidRequestResponse struct {
+	Error string `json:"error"`
 }
 
 type databaseStore struct {
@@ -447,7 +457,7 @@ func (api api) writeLinkVisits(c *gin.Context, visits []linkVisit) {
 }
 
 func (api api) createLink(c *gin.Context) {
-	input, ok := readLinkInput(c, false)
+	input, ok := readLinkInput(c)
 	if !ok {
 		return
 	}
@@ -488,7 +498,7 @@ func (api api) updateLink(c *gin.Context) {
 		return
 	}
 
-	input, ok := readLinkInput(c, true)
+	input, ok := readLinkInput(c)
 	if !ok {
 		return
 	}
@@ -496,7 +506,7 @@ func (api api) updateLink(c *gin.Context) {
 	ctx, cancel := requestContext(c)
 	defer cancel()
 
-	link, err := api.store.UpdateLink(ctx, id, input.OriginalURL, input.ShortName)
+	link, err := api.update(ctx, id, input)
 	if err != nil {
 		writeStoreError(c, err)
 		return
@@ -547,6 +557,26 @@ func (api api) create(ctx context.Context, input linkInput) (link, error) {
 	return link{}, errors.New("failed to generate a unique short name")
 }
 
+func (api api) update(ctx context.Context, id int64, input linkInput) (link, error) {
+	if input.ShortName != "" {
+		return api.store.UpdateLink(ctx, id, input.OriginalURL, input.ShortName)
+	}
+
+	for range generatedShortNameRetries {
+		shortName, err := generateShortName()
+		if err != nil {
+			return link{}, err
+		}
+
+		link, err := api.store.UpdateLink(ctx, id, input.OriginalURL, shortName)
+		if !isUniqueViolation(err) {
+			return link, err
+		}
+	}
+
+	return link{}, errors.New("failed to generate a unique short name")
+}
+
 func (api api) toLinkResponse(link link) linkResponse {
 	return linkResponse{
 		ID:          link.ID,
@@ -556,36 +586,44 @@ func (api api) toLinkResponse(link link) linkResponse {
 	}
 }
 
-func readLinkInput(c *gin.Context, requireShortName bool) (linkInput, bool) {
-	var input linkInput
-	if err := c.ShouldBindJSON(&input); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid_request", "request body must be valid JSON")
+func readLinkInput(c *gin.Context) (linkInput, bool) {
+	var payload createLinkPayload
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		writeBindingError(c, err)
 		return linkInput{}, false
 	}
 
-	input.OriginalURL = strings.TrimSpace(input.OriginalURL)
-	input.ShortName = strings.TrimSpace(input.ShortName)
-	if err := validateLinkInput(input, requireShortName); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid_request", err.Error())
-		return linkInput{}, false
-	}
-
-	return input, true
+	return linkInput{OriginalURL: payload.OriginalURL, ShortName: payload.ShortName}, true
 }
 
-func validateLinkInput(input linkInput, requireShortName bool) error {
-	parsedURL, err := url.ParseRequestURI(input.OriginalURL)
-	if err != nil || parsedURL.Host == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
-		return errors.New("original_url must be a valid http or https URL")
-	}
-	if requireShortName && input.ShortName == "" {
-		return errors.New("short_name is required")
-	}
-	if input.ShortName != "" && !shortNamePattern.MatchString(input.ShortName) {
-		return errors.New("short_name must contain 1 to 64 letters, digits, hyphens, or underscores")
+func writeBindingError(c *gin.Context, err error) {
+	validationErrors, ok := errors.AsType[validator.ValidationErrors](err)
+	if !ok {
+		c.AbortWithStatusJSON(http.StatusBadRequest, invalidRequestResponse{Error: "invalid request"})
+		return
 	}
 
-	return nil
+	errorsByField := make(map[string]string, len(validationErrors))
+	for _, validationError := range validationErrors {
+		field := validationFieldName(validationError.Field())
+		errorsByField[field] = validationErrorMessage(field, validationError.Tag())
+	}
+	c.AbortWithStatusJSON(http.StatusUnprocessableEntity, validationErrorResponse{Errors: errorsByField})
+}
+
+func validationErrorMessage(field, tag string) string {
+	return fmt.Sprintf("Key: 'createLinkPayload.%s' Error:Field validation for '%s' failed on the '%s' tag", field, field, tag)
+}
+
+func validationFieldName(field string) string {
+	switch field {
+	case "OriginalURL":
+		return "original_url"
+	case "ShortName":
+		return "short_name"
+	default:
+		return field
+	}
 }
 
 func readLinkID(c *gin.Context) (int64, bool) {
@@ -608,11 +646,17 @@ func writeStoreError(c *gin.Context, err error) {
 		return
 	}
 	if isUniqueViolation(err) {
-		writeError(c, http.StatusBadRequest, "short_name_taken", "short_name is already in use")
+		writeValidationError(c, "short_name", "short name already in use")
 		return
 	}
 
 	writeError(c, http.StatusInternalServerError, "internal_error", "internal server error")
+}
+
+func writeValidationError(c *gin.Context, field, message string) {
+	c.AbortWithStatusJSON(http.StatusUnprocessableEntity, validationErrorResponse{
+		Errors: map[string]string{field: message},
+	})
 }
 
 func isUniqueViolation(err error) bool {

@@ -163,6 +163,19 @@ func TestUpdateLink(t *testing.T) {
 	assert.JSONEq(t, `{"id":1,"original_url":"https://example.com/new-url","short_name":"new","short_url":"https://short.test/r/new"}`, response.Body.String())
 }
 
+func TestUpdateLinkGeneratesShortName(t *testing.T) {
+	t.Parallel()
+
+	store := newMemoryStore(link{ID: 1, OriginalURL: "https://example.com/old-url", ShortName: "old"})
+	response := performRequest(t, newRouter(store, "https://short.test"), http.MethodPut, "/api/links/1", `{"original_url":"https://example.com/new-url"}`)
+
+	assert.Equal(t, http.StatusOK, response.Code)
+	var updatedLink linkResponse
+	assert.NoError(t, json.Unmarshal(response.Body.Bytes(), &updatedLink))
+	assert.Len(t, updatedLink.ShortName, generatedShortNameLength)
+	assert.NotEqual(t, "old", updatedLink.ShortName)
+}
+
 func TestDeleteLink(t *testing.T) {
 	t.Parallel()
 
@@ -204,8 +217,71 @@ func TestDuplicateShortName(t *testing.T) {
 	store := newMemoryStore(link{ID: 1, OriginalURL: "https://example.com/first", ShortName: "taken"})
 	response := performRequest(t, newRouter(store, "https://short.test"), http.MethodPost, "/api/links", `{"original_url":"https://example.com/second","short_name":"taken"}`)
 
+	assert.Equal(t, http.StatusUnprocessableEntity, response.Code)
+	assert.JSONEq(t, `{"errors":{"short_name":"short name already in use"}}`, response.Body.String())
+}
+
+func TestLinkValidation(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		field  string
+	}{
+		{
+			name:   "invalid original url",
+			method: http.MethodPost,
+			path:   "/api/links",
+			body:   `{"original_url":"not a url","short_name":"valid"}`,
+			field:  "original_url",
+		},
+		{
+			name:   "missing original url",
+			method: http.MethodPut,
+			path:   "/api/links/1",
+			body:   `{"short_name":"valid"}`,
+			field:  "original_url",
+		},
+		{
+			name:   "short name is too short",
+			method: http.MethodPost,
+			path:   "/api/links",
+			body:   `{"original_url":"https://example.com","short_name":"ab"}`,
+			field:  "short_name",
+		},
+		{
+			name:   "short name is too long",
+			method: http.MethodPut,
+			path:   "/api/links/1",
+			body:   `{"original_url":"https://example.com","short_name":"abcdefghijklmnopqrstuvwxyzabcdefg"}`,
+			field:  "short_name",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			response := performRequest(t, newTestRouter(), testCase.method, testCase.path, testCase.body)
+
+			assert.Equal(t, http.StatusUnprocessableEntity, response.Code)
+			var body validationErrorResponse
+			assert.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+			assert.NotEmpty(t, body.Errors[testCase.field])
+			if testCase.name == "invalid original url" {
+				assert.Equal(t, "Key: 'createLinkPayload.original_url' Error:Field validation for 'original_url' failed on the 'url' tag", body.Errors[testCase.field])
+			}
+		})
+	}
+}
+
+func TestInvalidLinkJSON(t *testing.T) {
+	t.Parallel()
+
+	response := performRequest(t, newTestRouter(), http.MethodPost, "/api/links", `{"original_url":`)
+
 	assert.Equal(t, http.StatusBadRequest, response.Code)
-	assert.JSONEq(t, `{"code":"short_name_taken","message":"short_name is already in use"}`, response.Body.String())
+	assert.JSONEq(t, `{"error":"invalid request"}`, response.Body.String())
 }
 
 func TestRedirect(t *testing.T) {

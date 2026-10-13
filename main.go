@@ -101,6 +101,7 @@ type linkVisitResponse struct {
 type errorResponse struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	Error   string `json:"error,omitempty"`
 }
 
 type validationErrorResponse struct {
@@ -530,7 +531,7 @@ func (api api) deleteLink(c *gin.Context) {
 		return
 	}
 	if rows == 0 {
-		writeError(c, http.StatusNotFound, "link_not_found", "link not found")
+		writeNotFoundError(c)
 		return
 	}
 
@@ -642,7 +643,7 @@ func requestContext(c *gin.Context) (context.Context, context.CancelFunc) {
 
 func writeStoreError(c *gin.Context, err error) {
 	if errors.Is(err, sql.ErrNoRows) {
-		writeError(c, http.StatusNotFound, "link_not_found", "link not found")
+		writeNotFoundError(c)
 		return
 	}
 	if isUniqueViolation(err) {
@@ -666,6 +667,14 @@ func isUniqueViolation(err error) bool {
 
 func writeError(c *gin.Context, status int, code, message string) {
 	c.AbortWithStatusJSON(status, errorResponse{Code: code, Message: message})
+}
+
+func writeNotFoundError(c *gin.Context) {
+	c.AbortWithStatusJSON(http.StatusNotFound, errorResponse{
+		Code:    "link_not_found",
+		Message: "link not found",
+		Error:   "link not found",
+	})
 }
 
 func generateShortName() (string, error) {

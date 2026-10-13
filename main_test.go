@@ -206,7 +206,7 @@ func TestNotFoundErrors(t *testing.T) {
 			t.Parallel()
 			response := performRequest(t, router, testCase.method, testCase.path, testCase.body)
 			assert.Equal(t, http.StatusNotFound, response.Code)
-			assert.JSONEq(t, `{"code":"link_not_found","message":"link not found"}`, response.Body.String())
+			assert.JSONEq(t, `{"code":"link_not_found","message":"link not found","error":"link not found"}`, response.Body.String())
 		})
 	}
 }
@@ -320,7 +320,7 @@ func TestRedirectMissingLink(t *testing.T) {
 	response := performRequest(t, newTestRouter(), http.MethodGet, "/r/missing", "")
 
 	assert.Equal(t, http.StatusNotFound, response.Code)
-	assert.JSONEq(t, `{"code":"link_not_found","message":"link not found"}`, response.Body.String())
+	assert.JSONEq(t, `{"code":"link_not_found","message":"link not found","error":"link not found"}`, response.Body.String())
 }
 
 func TestListLinkVisitsPagination(t *testing.T) {

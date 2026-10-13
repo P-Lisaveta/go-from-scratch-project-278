@@ -6,6 +6,8 @@
 
 Спроектируйте приложение для удобных ссылок
 
+[![asciicast](https://asciinema.org/a/ZZH8wzhCNUjQarLA.svg)](https://asciinema.org/a/ZZH8wzhCNUjQarLA)
+
 Учебный проект Хекслета: https://ru.hexlet.io/programs/go-from-scratch
 
 
